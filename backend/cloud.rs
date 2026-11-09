@@ -60,7 +60,7 @@ pub(crate) fn call(request: &Value, objects: Box<dyn ObjectStore>) -> R<Value> {
         service.cases = store.cases()?;
         service.recipients = store.recipients().unwrap_or_default();
     }
-    if matches!(action, "list" | "receive" | "offer" | "accept" | "verify" | "inspect") {
+    if matches!(action, "list" | "receive" | "offer" | "accept" | "verify" | "inspect" | "examine" | "report_pdf") {
         if let Some(case) = request["case_id"].as_str().filter(|id| !id.is_empty()) {
             service.open_case(case)?;
         }

@@ -1,6 +1,8 @@
 mod files;
 #[path = "kripto/teks.rs"]
 mod text;
+mod stego;
+mod pdf;
 mod supabase;
 mod auth;
 mod audit;
@@ -250,7 +252,7 @@ impl EvidenceService {
             return self.open_case(id);
         }
         if action == "create_case" { return self.create_case(data); }
-        if self.selected_case.is_empty() && matches!(action, "receive" | "offer" | "accept" | "verify" | "inspect") {
+        if self.selected_case.is_empty() && matches!(action, "receive" | "offer" | "accept" | "verify" | "inspect" | "examine" | "report_pdf") {
             return Err("Buka kasus dari arsip terlebih dahulu.".into());
         }
 
@@ -350,6 +352,37 @@ mod tests {
         service.signed_in_user = "petugas_baru".into();
         let final_state = service.call("accept", &id).unwrap();
         assert_eq!(final_state["evidence"][0]["owner"], "petugas_baru");
+        assert!(service.verify_audit());
+    }
+
+    #[test]
+    fn stego_message_exam_note_and_pdf_report_work_end_to_end() {
+        let mut service = EvidenceService::new().unwrap();
+        let offer = service.call("offer", &json!({
+            "id": "BB-001",
+            "stego_message": "Periksa koneksi Android-2F pukul 19.25"
+        })).unwrap();
+        assert_eq!(offer["evidence"][0]["pending"], true);
+
+        service.call("role", &json!({"role": "Penyidik"})).unwrap();
+        service.call("accept", &json!({"id": "BB-001"})).unwrap();
+
+        let inspected = service.call("inspect", &json!({"id": "BB-001"})).unwrap();
+        assert_eq!(inspected["stego_message"], "Periksa koneksi Android-2F pukul 19.25");
+        assert!(inspected["stego_png"].as_str().is_some());
+
+        service.call("examine", &json!({
+            "id": "BB-001",
+            "exam_note": "Log mencatat koneksi pukul 19.25, identitas pengguna belum diketahui."
+        })).unwrap();
+
+        let after_exam = service.call("inspect", &json!({"id": "BB-001"})).unwrap();
+        assert_eq!(after_exam["exam_note"], "Log mencatat koneksi pukul 19.25, identitas pengguna belum diketahui.");
+        assert_eq!(service.events.last().unwrap().action, "Hasil pemeriksaan penyidik dicatat");
+
+        let report = service.call("report_pdf", &json!({"id": "BB-001"})).unwrap();
+        assert!(report["filename"].as_str().unwrap().ends_with(".pdf"));
+        assert!(!report["pdf_base64"].as_str().unwrap().is_empty());
         assert!(service.verify_audit());
     }
 }

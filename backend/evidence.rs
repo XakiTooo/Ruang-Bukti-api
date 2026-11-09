@@ -1,4 +1,4 @@
-use super::{EvidenceService, files, intake::Intake, text};
+use super::{EvidenceService, files, intake::Intake, pdf, stego, text};
 use super::files::StoredFile;
 use crate::crypto::{self, Envelope, R};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -70,6 +70,10 @@ impl EvidenceService {
                 let context = format!("{}:{}", self.selected_case, item.id);
                 let source = text::open_note(&self.master, &item.note, &context)?;
                 let intake = Intake::decode(&source);
+                let stego_message = intake.as_ref().and_then(|i| i.stego_png.as_deref())
+                    .and_then(|b64| B64.decode(b64).ok())
+                    .and_then(|png| stego::open_png_message(&self.master, &png, &context).ok());
+                let exam_note = intake.as_ref().and_then(|i| i.exam_note.clone());
                 let received_at = self.events.iter().find(|event| {
                     event.evidence == item.id && event.action == "Bukti diterima"
                 }).map(|event| event.time);
@@ -81,6 +85,9 @@ impl EvidenceService {
                 Ok(json!({
                     "source": if intake.is_none() { Some(source) } else { None },
                     "intake": intake,
+                    "stego_message": stego_message,
+                    "stego_png": intake.as_ref().and_then(|i| i.stego_png.clone()),
+                    "exam_note": exam_note,
                     "received_at": received_at,
                     "algorithm": item.file.algorithm(),
                     "storage": storage,
@@ -101,10 +108,19 @@ impl EvidenceService {
                 } else {
                     self.last_recipient(field("id")).map(str::to_owned)
                 };
+                let stego_msg = field("stego_message").trim();
                 let item = self.evidence.iter_mut().find(|item| item.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
                 let event = if action == "offer" {
                     if item.custodian != self.role || item.pending || !owns_evidence {
                         return Err("Hanya penanggung jawab saat ini dapat mengajukan serah terima.".into());
+                    }
+                    if self.role == "Petugas penerima" && !stego_msg.is_empty() {
+                        let context = format!("{}:{}", self.selected_case, item.id);
+                        let source = text::open_note(&self.master, &item.note, &context)?;
+                        let mut intake = Intake::from_plain(&source);
+                        let png = stego::seal_png_message(&self.master, stego_msg, &context)?;
+                        intake.stego_png = Some(B64.encode(png));
+                        item.note = text::seal_note(&self.master, &intake.to_encoded()?, &context)?;
                     }
                     item.pending = true;
                     if self.role == "Petugas penerima" { "Serah terima diajukan" } else { "Pengembalian diajukan" }
@@ -135,6 +151,68 @@ impl EvidenceService {
                 if let Some(recipient) = recipient { self.record_transfer(event, id, recipient); }
                 else { self.record(event, id); }
                 Ok(self.summary())
+            }
+            "examine" => {
+                if self.role != "Penyidik" {
+                    return Err("Hanya penyidik yang dapat mencatat hasil pemeriksaan.".into());
+                }
+                let exam = field("exam_note").trim();
+                if exam.is_empty() || exam.len() > 600 {
+                    return Err("Isi catatan hasil pemeriksaan (1 sampai 600 karakter).".into());
+                }
+                let username = self.username().to_owned();
+                let owns_evidence = self.owner(field("id")).is_none_or(|owner| owner == username);
+                let item = self.evidence.iter_mut().find(|item| item.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
+                if item.custodian != "Penyidik" || item.pending || !owns_evidence {
+                    return Err("Bukti harus diterima oleh akun penyidik ini sebelum mencatat hasil pemeriksaan.".into());
+                }
+                let context = format!("{}:{}", self.selected_case, item.id);
+                let source = text::open_note(&self.master, &item.note, &context)?;
+                let mut intake = Intake::from_plain(&source);
+                intake.exam_note = Some(exam.to_owned());
+                item.note = text::seal_note(&self.master, &intake.to_encoded()?, &context)?;
+                let id = item.id.clone();
+                self.record("Hasil pemeriksaan penyidik dicatat", id);
+                Ok(self.summary())
+            }
+            "report_pdf" => {
+                let item = self.evidence.iter().find(|item| item.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
+                let context = format!("{}:{}", self.selected_case, item.id);
+                let source = text::open_note(&self.master, &item.note, &context)?;
+                let intake = Intake::decode(&source);
+                let stego_message = intake.as_ref().and_then(|i| i.stego_png.as_deref())
+                    .and_then(|b64| B64.decode(b64).ok())
+                    .and_then(|png| stego::open_png_message(&self.master, &png, &context).ok());
+                let exam_note = intake.as_ref().and_then(|i| i.exam_note.as_deref());
+                let current_case = self.cases.iter().find(|c| c.id == self.selected_case);
+                let case_title = current_case.map(|c| c.title.as_str()).unwrap_or("Perkara Forensik");
+                let officer = self.last_officer(&item.id)
+                    .or_else(|| current_case.and_then(|c| c.officer.as_deref()))
+                    .unwrap_or("petugas_bukti");
+                let investigator = current_case.and_then(|c| c.investigator.as_deref())
+                    .unwrap_or("penyidik");
+                let latest_hash = self.events.iter().rev()
+                    .find(|e| e.evidence == item.id)
+                    .map(|e| e.hash.as_str())
+                    .unwrap_or("GENESIS");
+                let pdf_bytes = pdf::generate_handover_pdf(
+                    &self.selected_case,
+                    case_title,
+                    &item.id,
+                    &item.name,
+                    item.size,
+                    officer,
+                    investigator,
+                    self.owner(&item.id).unwrap_or(&item.custodian),
+                    &item.original_hash,
+                    latest_hash,
+                    stego_message.as_deref(),
+                    exam_note,
+                );
+                Ok(json!({
+                    "filename": format!("Berita-Acara-{}-{}.pdf", self.selected_case.replace('/', "-"), item.id),
+                    "pdf_base64": B64.encode(pdf_bytes)
+                }))
             }
             "verify" => {
                 let item = self.evidence.iter().find(|item| item.id == field("id")).ok_or("Bukti tidak ditemukan.")?;

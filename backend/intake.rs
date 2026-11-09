@@ -4,15 +4,35 @@ use serde_json::Value;
 
 const PREFIX: &str = "ruang-bukti:intake:v1\n";
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub(super) struct Intake {
-    category: String,
-    origin: String,
-    acquisition: String,
-    notes: String,
+    pub(super) category: String,
+    pub(super) origin: String,
+    pub(super) acquisition: String,
+    pub(super) notes: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) stego_png: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) exam_note: Option<String>,
 }
 
 impl Intake {
+    pub(super) fn from_plain(source: &str) -> Self {
+        Self::decode(source).unwrap_or_else(|| Self {
+            category: "Lainnya".into(),
+            origin: source.to_owned(),
+            acquisition: "Diserahkan langsung".into(),
+            notes: String::new(),
+            stego_png: None,
+            exam_note: None,
+        })
+    }
+
+    pub(super) fn to_encoded(&self) -> R<String> {
+        let serialized = serde_json::to_string(self).map_err(|_| "Catatan penerimaan tidak valid.")?;
+        Ok(format!("{PREFIX}{serialized}"))
+    }
+
     pub(super) fn encode(data: &Value) -> R<String> {
         let mut intake: Self = serde_json::from_value(data.clone())
             .map_err(|_| "Lengkapi informasi penerimaan.")?;
