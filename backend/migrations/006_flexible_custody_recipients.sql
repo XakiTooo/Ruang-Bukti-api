@@ -9,6 +9,11 @@ create index if not exists cases_investigator_idx on ruang_bukti.cases(investiga
 
 grant update (revision, officer, investigator) on ruang_bukti.cases to service_role;
 
+drop policy if exists dongles_backend_read on ruang_bukti.dongles;
+create policy dongles_backend_read on ruang_bukti.dongles for select to service_role using (true);
+drop policy if exists dongles_backend_insert on ruang_bukti.dongles;
+create policy dongles_backend_insert on ruang_bukti.dongles for insert to service_role with check (true);
+
 create or replace function public.ruang_bukti_create(case_row jsonb) returns void
 language sql security invoker set search_path = '' as $$
   insert into ruang_bukti.cases(id, title, location, incident_time, officer, investigator)

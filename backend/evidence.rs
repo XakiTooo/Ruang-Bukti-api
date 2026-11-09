@@ -67,14 +67,27 @@ impl EvidenceService {
             }
             "inspect" => {
                 let item = self.evidence.iter().find(|item| item.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
-                let source = text::open_note(&self.master, &item.note, &format!("{}:{}",self.selected_case,item.id))?;
+                let context = format!("{}:{}", self.selected_case, item.id);
+                let source = text::open_note(&self.master, &item.note, &context)?;
                 let intake = Intake::decode(&source);
                 let received_at = self.events.iter().find(|event| {
                     event.evidence == item.id && event.action == "Bukti diterima"
                 }).map(|event| event.time);
+                let storage = match &item.file {
+                    StoredFile::Object { r2_key } => format!("Cloudflare R2 ({r2_key})"),
+                    StoredFile::Inline(_) => "Memori lokal (Inline)".to_owned(),
+                };
+                let preview: String = item.note.ciphertext.chars().take(36).collect();
                 Ok(json!({
                     "source": if intake.is_none() { Some(source) } else { None },
-                    "intake": intake, "received_at": received_at, "algorithm": item.file.algorithm()
+                    "intake": intake,
+                    "received_at": received_at,
+                    "algorithm": item.file.algorithm(),
+                    "storage": storage,
+                    "note_algorithm": format!("Vigenère + {}", item.note.algorithm),
+                    "note_nonce": item.note.nonce,
+                    "note_ciphertext_preview": preview,
+                    "hkdf_context": format!("ruang-bukti:{context}:file")
                 }))
             }
             "offer" | "accept" => {
