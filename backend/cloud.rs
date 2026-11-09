@@ -49,13 +49,17 @@ pub(crate) fn call(request: &Value, objects: Box<dyn ObjectStore>) -> R<Value> {
     if action == "login" {
         account.verify(&service.master, data)?;
         service.cases = store.cases()?;
+        service.recipients = store.recipients().unwrap_or_default();
         let session = Session { username: account.username, expires: now()? + SESSION_TTL };
         let bytes = Zeroizing::new(serde_json::to_vec(&session).map_err(|_| "Sesi tidak dapat dibuat.")?);
         let session_key = Zeroizing::new(crypto::key(&service.master, SESSION_CONTEXT));
         let token = crypto::seal(&session_key, &bytes, SESSION_CONTEXT, false)?;
         return Ok(json!({"session": token, "snapshot": service.summary()}));
     }
-    if action != "inbox" { service.cases = store.cases()?; }
+    if action != "inbox" {
+        service.cases = store.cases()?;
+        service.recipients = store.recipients().unwrap_or_default();
+    }
     if matches!(action, "list" | "receive" | "offer" | "accept" | "verify" | "inspect") {
         if let Some(case) = request["case_id"].as_str().filter(|id| !id.is_empty()) {
             service.open_case(case)?;

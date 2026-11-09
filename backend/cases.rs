@@ -9,6 +9,10 @@ pub(super) struct CaseInfo {
     pub(super) title: String,
     pub(super) location: String,
     pub(super) incident_time: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) officer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) investigator: Option<String>,
 }
 
 impl CaseInfo {
@@ -18,6 +22,8 @@ impl CaseInfo {
             title: "Penggunaan jaringan Wi-Fi".into(),
             location: "Rumah Raka (simulasi)".into(),
             incident_time: "5 November 2026".into(),
+            officer: Some("petugas_bukti".into()),
+            investigator: Some("penyidik".into()),
         }
     }
 }
@@ -29,11 +35,24 @@ impl EvidenceService {
         let title = field("title");
         let location = field("location");
         let incident_time = field("incident_time");
+        let requested_investigator = field("investigator");
         if title.is_empty() || title.len() > 240 || location.len() > 240 || incident_time.len() > 80 {
             return Err("Isi judul kasus. Ringkas lokasi dan waktu kejadian.".into());
         }
+        let investigator = if !requested_investigator.is_empty() {
+            Some(self.resolve_recipient("", &requested_investigator)?)
+        } else {
+            self.default_investigator()
+        };
         let random = security::random().map_err(|error| error.to_string())?;
-        let case = CaseInfo { id: format!("SIM-BB/{}", security::hex(&random[..6]).to_uppercase()), title, location, incident_time };
+        let case = CaseInfo {
+            id: format!("SIM-BB/{}", security::hex(&random[..6]).to_uppercase()),
+            title,
+            location,
+            incident_time,
+            officer: Some(self.username().to_owned()),
+            investigator,
+        };
         if let Some(store) = &self.store { store.create_case(&case)?; }
         let id = case.id.clone();
         self.cases.push(case);

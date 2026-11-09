@@ -1,4 +1,4 @@
-use super::{auth::Account, CaseInfo, Event, Evidence};
+use super::{auth::Account, CaseInfo, Event, Evidence, RecipientAccount};
 use crate::crypto::{self, R};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -50,6 +50,11 @@ impl SupabaseStore {
     pub fn cases(&self) -> R<Vec<CaseInfo>> {
         serde_json::from_value(self.rpc("ruang_bukti_cases", json!({}))?)
             .map_err(|_| "Daftar kasus dari Supabase tidak valid.".into())
+    }
+
+    pub fn recipients(&self) -> R<Vec<RecipientAccount>> {
+        serde_json::from_value(self.rpc("ruang_bukti_recipients", json!({}))?)
+            .map_err(|_| "Daftar akun penerima dari Supabase tidak valid.".into())
     }
 
     pub fn inbox(&self, username: &str) -> R<Value> {

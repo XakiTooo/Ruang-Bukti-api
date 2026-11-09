@@ -82,10 +82,9 @@ impl EvidenceService {
                     return Err("Peran ini hanya dapat memantau serah terima.".into());
                 }
                 let username = self.username().to_owned();
-                let default_owner = if self.role == "Petugas penerima" { "petugas_bukti" } else { "penyidik" };
-                let owns_evidence = self.owner(field("id")).unwrap_or(default_owner) == username;
+                let owns_evidence = self.owner(field("id")).is_none_or(|owner| owner == username);
                 let recipient = if action == "offer" {
-                    Some(if self.role == "Petugas penerima" { "penyidik" } else { "petugas_bukti" }.to_owned())
+                    Some(self.resolve_recipient(field("id"), field("recipient").trim())?)
                 } else {
                     self.last_recipient(field("id")).map(str::to_owned)
                 };
@@ -100,7 +99,7 @@ impl EvidenceService {
                     if item.custodian == self.role || !item.pending {
                         return Err("Belum ada serah terima untuk diterima.".into());
                     }
-                    if recipient.as_deref().unwrap_or(default_owner) != username {
+                    if recipient.as_deref().is_some_and(|target| target != username) {
                         return Err("Serah terima ditujukan ke akun lain.".into());
                     }
                     let context = format!("{}:{}", self.selected_case, item.id);
@@ -114,6 +113,12 @@ impl EvidenceService {
                     if self.role == "Penyidik" { "Bukti diterima penyidik" } else { "Bukti dikembalikan ke petugas" }
                 };
                 let id = item.id.clone();
+                if action == "offer" && self.role == "Petugas penerima" {
+                    if let (Some(case), Some(target)) = (self.cases.iter_mut().find(|c| c.id == self.selected_case), recipient.as_ref()) {
+                        if case.officer.is_none() { case.officer = Some(username); }
+                        case.investigator = Some(target.clone());
+                    }
+                }
                 if let Some(recipient) = recipient { self.record_transfer(event, id, recipient); }
                 else { self.record(event, id); }
                 Ok(self.summary())
