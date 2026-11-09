@@ -72,6 +72,11 @@ impl SupabaseStore {
         Ok(())
     }
 
+    pub fn enroll(&self, account: Value, device_hash: &str) -> R<bool> {
+        self.rpc("ruang_bukti_enroll", json!({"account_row":account,"device_key_hash":device_hash}))?
+            .as_bool().ok_or_else(|| "Respons pendaftaran Supabase tidak valid.".into())
+    }
+
     pub fn read(&self, case_id: &str) -> R<Snapshot> {
         serde_json::from_value(self.rpc("ruang_bukti_read", json!({"case_key":case_id}))?)
             .map_err(|_| "Data Ruang Bukti dari Supabase tidak valid.".into())
@@ -89,6 +94,9 @@ impl SupabaseStore {
             .header("apikey", self.secret.as_str())
             .send_json(body).map_err(|_| "Supabase belum bisa dijangkau. Periksa internet dan coba lagi.")?;
         if !response.status().is_success() {
+            if name == "ruang_bukti_enroll" && response.status().as_u16() == 409 {
+                return Err("Nama akun sudah terdaftar dengan kunci atau peran berbeda.".into());
+            }
             return Err(format!("Supabase menolak permintaan ({}). Periksa schema dan konfigurasi lokal.", response.status().as_u16()));
         }
         if response.status().as_u16() == 204 { return Ok(Value::Null); }

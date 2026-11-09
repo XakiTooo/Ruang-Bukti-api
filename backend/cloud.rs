@@ -38,7 +38,7 @@ pub(crate) fn call(request: &Value, objects: Box<dyn ObjectStore>) -> R<Value> {
         if session.expires <= now()? { return Err("Sesi berakhir. Keluar lalu masuk kembali.".into()); }
         store.account(&session.username)?
     };
-    account.check_dongle(key)?;
+    account.check_dongle(key, request["device_key"].as_str().unwrap_or(""))?;
     if action == "check_dongle" {
         return Ok(json!({"ok": true}));
     }

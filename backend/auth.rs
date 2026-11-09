@@ -10,16 +10,25 @@ pub(super) struct Account {
     role: String,
     password_hash: String,
     dongle_hash: Option<String>,
+    device_hash: Option<String>,
     face: Envelope,
 }
 
 impl Account {
-    pub(super) fn check_dongle(&self, key: &str) -> R<()> {
+    pub(super) fn check_dongle(&self, key: &str, device_key: &str) -> R<()> {
         let expected = self.dongle_hash.as_deref().ok_or("Kunci akun belum didaftarkan.")?;
         if key.len() != 64 || !key.bytes().all(|b| b.is_ascii_hexdigit())
             || !bool::from(subtle::ConstantTimeEq::ct_eq(crypto::hash(key.as_bytes()).as_bytes(), expected.as_bytes()))
         {
             return Err("Colok flashdisk yang berisi kunci akun ini.".into());
+        }
+        let device_hash = self.device_hash.as_deref().ok_or("Dongle akun belum didaftarkan.")?;
+        if !valid_hex(device_key)
+            || !bool::from(subtle::ConstantTimeEq::ct_eq(
+                crypto::hash(device_key.as_bytes()).as_bytes(), device_hash.as_bytes()
+            ))
+        {
+            return Err("Flashdisk ini tidak terdaftar untuk akun tersebut.".into());
         }
         Ok(())
     }
@@ -66,6 +75,10 @@ impl Account {
     }
 }
 
-fn valid(vectors: &[Vec<f64>]) -> bool {
+pub(super) fn valid_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+pub(super) fn valid(vectors: &[Vec<f64>]) -> bool {
     vectors.iter().all(|vector| vector.len() == 128 && vector.iter().all(|n| n.is_finite() && n.abs() <= 2.0))
 }

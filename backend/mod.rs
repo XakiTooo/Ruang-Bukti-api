@@ -10,6 +10,7 @@ mod intake;
 mod session;
 mod transactions;
 pub mod cloud;
+pub mod registration;
 
 use crate::{crypto::R, security};
 use self::{audit::{Event, verify_events}, cases::CaseInfo, evidence::Evidence, files::ObjectStore};
