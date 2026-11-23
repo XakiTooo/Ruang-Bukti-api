@@ -1,0 +1,21 @@
+name: Rust 1.92 compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the deployment toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal
+      - name: Test the locked dependencies
+        run: cargo +1.92.0 test --locked --release --bin bukti
+      - name: Build the deployment binary
+        run: cargo +1.92.0 build --locked --release --bin bukti
