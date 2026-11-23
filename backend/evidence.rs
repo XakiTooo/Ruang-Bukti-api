@@ -83,10 +83,13 @@ impl EvidenceService {
                 };
                 let preview: String = item.note.ciphertext.chars().take(36).collect();
                 Ok(json!({
-                    "source": if intake.is_none() { Some(source) } else { None },
+                    "source": if intake.is_none() { Some(source.clone()) } else { None },
                     "intake": intake,
                     "stego_message": stego_message,
                     "stego_png": intake.as_ref().and_then(|i| i.stego_png.clone()),
+                    "stego_cover": intake.as_ref().and_then(|i| i.stego_cover.clone()),
+                    "note_plaintext": intake.as_ref().map(|i| format!("Kategori: {}\nAsal: {}\nPerolehan: {}\nCatatan: {}\nHasil pemeriksaan: {}", i.category, i.origin, i.acquisition, i.notes, i.exam_note.as_deref().unwrap_or("—"))).unwrap_or(source),
+                    "note_envelope": item.note,
                     "exam_note": exam_note,
                     "received_at": received_at,
                     "algorithm": item.file.algorithm(),
@@ -96,6 +99,29 @@ impl EvidenceService {
                     "note_ciphertext_preview": preview,
                     "hkdf_context": format!("ruang-bukti:{context}:file")
                 }))
+            }
+            "download_plain" => {
+                let item = self.evidence.iter().find(|e| e.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
+                let context = format!("{}:{}", self.selected_case, item.id);
+                let bytes = zeroize::Zeroizing::new(item.file.decrypt(self.objects.as_deref(), &self.master, &context)?);
+                if crypto::hash(&bytes) != item.original_hash { return Err("Hash hasil dekripsi tidak cocok. Unduhan dibatalkan.".into()); }
+                Ok(json!({"filename": item.name, "base64": B64.encode(&*bytes), "sha256": item.original_hash}))
+            }
+            "test_audit" => {
+                let mut copy = self.events.clone();
+                let before = super::audit::verify_events(&copy);
+                let first = copy.first_mut().ok_or("Belum ada catatan audit untuk diuji.")?;
+                let original = first.action.clone();
+                first.action.push_str(" [diubah untuk pengujian]");
+                Ok(json!({"before": before, "after": super::audit::verify_events(&copy), "original": original,
+                    "changed": copy[0].action, "original_unchanged": self.verify_audit()}))
+            }
+            "extract_stego" => {
+                let item = self.evidence.iter().find(|e| e.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
+                if field("png").len() > 1_340_000 { return Err("PNG maksimal 1 MB.".into()); }
+                let png = B64.decode(field("png")).map_err(|_| "PNG tidak valid.")?;
+                let context = format!("{}:{}", self.selected_case, item.id);
+                Ok(json!({"message": stego::open_png_message(&self.master, &png, &context)?}))
             }
             "offer" | "accept" => {
                 if !matches!(self.role, "Petugas penerima" | "Penyidik") {
@@ -118,7 +144,11 @@ impl EvidenceService {
                         let context = format!("{}:{}", self.selected_case, item.id);
                         let source = text::open_note(&self.master, &item.note, &context)?;
                         let mut intake = Intake::from_plain(&source);
-                        let png = stego::seal_png_message(&self.master, stego_msg, &context)?;
+                        if field("stego_carrier").len() > 1_340_000 { return Err("Gambar pembawa maksimal 1 MB.".into()); }
+                        let carrier = B64.decode(field("stego_carrier")).map_err(|_| "Pilih gambar pembawa terlebih dahulu.")?;
+                        let cover = stego::cover_png(&carrier)?;
+                        let png = stego::seal_png_message(&self.master, stego_msg, &context, &carrier)?;
+                        intake.stego_cover = Some(B64.encode(cover));
                         intake.stego_png = Some(B64.encode(png));
                         item.note = text::seal_note(&self.master, &intake.to_encoded()?, &context)?;
                     }
@@ -195,6 +225,8 @@ impl EvidenceService {
                     .find(|e| e.evidence == item.id)
                     .map(|e| e.hash.as_str())
                     .unwrap_or("GENESIS");
+                let file_ok = item.file.verify(self.objects.as_deref(), &self.master, &format!("{}:{}", self.selected_case, item.id), &item.original_hash)?;
+                let audit_ok = self.verify_audit();
                 let pdf_bytes = pdf::generate_handover_pdf(
                     &self.selected_case,
                     case_title,
@@ -208,6 +240,8 @@ impl EvidenceService {
                     latest_hash,
                     stego_message.as_deref(),
                     exam_note,
+                    file_ok,
+                    audit_ok,
                 );
                 Ok(json!({
                     "filename": format!("Berita-Acara-{}-{}.pdf", self.selected_case.replace('/', "-"), item.id),

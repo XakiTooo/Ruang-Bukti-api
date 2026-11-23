@@ -23,6 +23,16 @@ impl StoredFile {
         }
     }
 
+    pub(super) fn decrypt(&self, objects: Option<&dyn ObjectStore>, master: &[u8; 32], context: &str) -> R<Vec<u8>> {
+        let file = match self {
+            Self::Inline(file) => file.clone(),
+            Self::Object { r2_key } => serde_json::from_slice::<Envelope>(&objects.ok_or("Penyimpanan belum tersedia.")?.get(r2_key)?)
+                .map_err(|_| "File terenkripsi rusak.")?,
+        };
+        let key = zeroize::Zeroizing::new(crypto::key(master, &format!("ruang-bukti:{context}:file")));
+        crypto::open(&key, &file, &format!("ruang-bukti:{context}:file"))
+    }
+
     pub(super) fn verify(
         &self,
         objects: Option<&dyn ObjectStore>,

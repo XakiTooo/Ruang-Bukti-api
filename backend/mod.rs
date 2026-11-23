@@ -252,7 +252,7 @@ impl EvidenceService {
             return self.open_case(id);
         }
         if action == "create_case" { return self.create_case(data); }
-        if self.selected_case.is_empty() && matches!(action, "receive" | "offer" | "accept" | "verify" | "inspect" | "examine" | "report_pdf") {
+        if self.selected_case.is_empty() && matches!(action, "receive" | "offer" | "accept" | "verify" | "inspect" | "examine" | "report_pdf" | "download_plain" | "test_audit" | "extract_stego") {
             return Err("Buka kasus dari arsip terlebih dahulu.".into());
         }
 
@@ -264,6 +264,70 @@ impl EvidenceService {
 mod tests {
     use super::*;
     use crate::crypto;
+
+    #[test]
+    fn workflow_denies_wrong_roles_duplicates_and_missing_carrier() {
+        let mut service = EvidenceService::new().unwrap();
+        let id = json!({"id": "BB-001"});
+        let original_note = service.evidence[0].note.ciphertext.clone();
+        let count = service.events.len();
+        assert!(service.call("offer", &json!({"id":"BB-001", "stego_message":"instruction"})).is_err());
+        assert_eq!(service.events.len(), count);
+        assert_eq!(service.evidence[0].note.ciphertext, original_note);
+        assert!(!service.evidence[0].pending);
+        assert!(service.call("examine", &json!({"id":"BB-001", "exam_note":"note"})).is_err());
+        service.call("offer", &id).unwrap();
+        assert!(service.call("offer", &id).is_err());
+        service.call("role", &json!({"role":"Penyidik cadangan"})).unwrap();
+        assert!(service.call("accept", &id).is_err());
+        assert!(service.call("examine", &json!({"id":"BB-001", "exam_note":"note"})).is_err());
+        service.call("role", &json!({"role":"Pengawas"})).unwrap();
+        assert!(service.call("offer", &id).is_err());
+        assert!(service.call("accept", &id).is_err());
+        assert!(service.call("create_case", &json!({"title":"not allowed"})).is_err());
+        assert!(service.receive("file.txt", "source", b"test").is_err());
+        assert!(service.call("examine", &json!({"id":"BB-001", "exam_note":"note"})).is_err());
+        assert_eq!(service.call("verify", &id).unwrap()["file_ok"], true);
+        assert_eq!(service.evidence[0].custodian, "Petugas penerima");
+        assert!(service.evidence[0].pending);
+    }
+
+    #[test]
+    fn exported_pdf_reports_corruption_instead_of_claiming_integrity() {
+        let mut service = EvidenceService::new().unwrap();
+        if let files::StoredFile::Inline(file) = &mut service.evidence[0].file {
+            file.ciphertext = "corrupted".into();
+        }
+        let result = service.call("report_pdf", &json!({"id":"BB-001"})).unwrap();
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(result["pdf_base64"].as_str().unwrap()).unwrap();
+        let pdf = String::from_utf8_lossy(&bytes);
+        assert!(pdf.contains("TIDAK TERVERIFIKASI"));
+        assert!(!pdf.contains("100% UTUH"));
+    }
+
+    #[test]
+    fn crypto_demonstration_does_not_mutate_audit_and_download_matches_original() {
+        let mut service = EvidenceService::new().unwrap();
+        service.receive("contoh.txt", "catatan rahasia", b"file asli untuk dosen").unwrap();
+        let id = json!({"id": "BB-002"});
+        let inspected = service.call("inspect", &id).unwrap();
+        assert_eq!(inspected["note_plaintext"], "catatan rahasia");
+        assert!(!inspected["note_envelope"]["ciphertext"].as_str().unwrap().contains("catatan rahasia"));
+        let downloaded = service.call("download_plain", &id).unwrap();
+        use base64::Engine;
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(downloaded["base64"].as_str().unwrap()).unwrap(), b"file asli untuk dosen");
+        let before = serde_json::to_value(&service.events).unwrap();
+        let result = service.call("test_audit", &id).unwrap();
+        assert_eq!(result["before"], true);
+        assert_eq!(result["after"], false);
+        assert_eq!(result["original_unchanged"], true);
+        assert_eq!(serde_json::to_value(&service.events).unwrap(), before);
+        if let files::StoredFile::Inline(file) = &mut service.evidence[1].file {
+            file.ciphertext = "rusak".into();
+        }
+        assert!(service.call("download_plain", &id).is_err());
+    }
 
     #[test]
     fn failed_handoff_is_audited_without_changing_custody() {
@@ -360,7 +424,12 @@ mod tests {
         let mut service = EvidenceService::new().unwrap();
         let offer = service.call("offer", &json!({
             "id": "BB-001",
-            "stego_message": "Periksa koneksi Android-2F pukul 19.25"
+            "stego_message": "Periksa koneksi Android-2F pukul 19.25",
+            "stego_carrier": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, stego::cover_png(&{
+                let mut bytes = Vec::new();
+                image::DynamicImage::new_rgb8(80, 60).write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+                bytes
+            }).unwrap())
         })).unwrap();
         assert_eq!(offer["evidence"][0]["pending"], true);
 

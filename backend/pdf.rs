@@ -11,6 +11,8 @@ pub fn generate_handover_pdf(
     latest_event_hash: &str,
     stego_message: Option<&str>,
     exam_note: Option<&str>,
+    file_ok: bool,
+    audit_ok: bool,
 ) -> Vec<u8> {
     fn clean(input: &str) -> String {
         input
@@ -38,7 +40,8 @@ pub fn generate_handover_pdf(
         ("Algoritma Stego    : LSB PNG Lossless + AES-256-GCM (Header STEG1)".into(), false),
         (format!("SHA-256 File Asli  : {}", original_hash), false),
         (format!("Hash Rantai Audit  : {}", latest_event_hash), false),
-        ("Status Integritas  : TERVERIFIKASI COCOK (100% UTUH)".into(), true),
+        (format!("Integritas File    : {}", if file_ok { "HASH COCOK" } else { "TIDAK TERVERIFIKASI" }), true),
+        (format!("Rantai Audit       : {}", if audit_ok { "VALID" } else { "TIDAK VALID" }), true),
         ("----------------------------------------------------------------------------".into(), false),
         ("INSTRUKSI STEGANOGRAFI PETUGAS (LSB PNG):".into(), true),
         (stego_message.unwrap_or("(Tidak ada pesan gambar disisipkan)").into(), false),
@@ -46,7 +49,7 @@ pub fn generate_handover_pdf(
         ("CATATAN HASIL PEMERIKSAAN FORENSIK PENYIDIK:".into(), true),
         (exam_note.unwrap_or("(Belum ada catatan pemeriksaan penyidik)").into(), false),
         ("----------------------------------------------------------------------------".into(), false),
-        ("Dokumen ini dibuat otomatis oleh Ruang Bukti setelah verifikasi hash berhasil.".into(), false),
+        ("Status di atas diperiksa saat ekspor. Hash tidak membuktikan kebenaran isi bukti.".into(), false),
     ];
 
     let mut stream = String::from("BT\n");

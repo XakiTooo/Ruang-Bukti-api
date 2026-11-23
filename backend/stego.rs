@@ -2,8 +2,6 @@ use crate::crypto::{self, Envelope, R};
 use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 5] = b"STEG1";
-const WIDTH: u32 = 80;
-const HEIGHT: u32 = 60;
 
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
@@ -67,62 +65,27 @@ fn encode_uncompressed_png(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {
     png
 }
 
-fn decode_uncompressed_png(png: &[u8]) -> R<Vec<u8>> {
-    if png.len() < 33 || &png[..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err("Citra pembawa PNG tidak valid.".into());
+fn read_carrier(bytes: &[u8]) -> R<image::RgbImage> {
+    if bytes.len() > 1_000_000 { return Err("Gambar pembawa maksimal 1 MB.".into()); }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()
+        .map_err(|_| "Format gambar tidak terbaca.")?;
+    if !matches!(reader.format(), Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)) {
+        return Err("Pilih gambar PNG atau JPEG.".into());
     }
-    let mut pos = 8;
-    let mut width = 0u32;
-    let mut height = 0u32;
-    let mut idat = Vec::new();
-    while pos + 12 <= png.len() {
-        let len = u32::from_be_bytes([png[pos], png[pos + 1], png[pos + 2], png[pos + 3]]) as usize;
-        let kind = &png[pos + 4..pos + 8];
-        if pos + 12 + len > png.len() {
-            return Err("Potongan citra PNG rusak.".into());
-        }
-        let data = &png[pos + 8..pos + 8 + len];
-        if kind == b"IHDR" && len >= 8 {
-            width = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-            height = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-        } else if kind == b"IDAT" {
-            idat.extend_from_slice(data);
-        } else if kind == b"IEND" {
-            break;
-        }
-        pos += 12 + len;
-    }
-    if width == 0 || height == 0 || idat.len() < 7 {
-        return Err("Data piksel PNG tidak ditemukan.".into());
-    }
-    let mut raw = Vec::new();
-    let mut zpos = 2; // skip 2-byte zlib header
-    while zpos + 5 <= idat.len() {
-        let header = idat[zpos];
-        let len = u16::from_le_bytes([idat[zpos + 1], idat[zpos + 2]]) as usize;
-        zpos += 5;
-        if zpos + len > idat.len() {
-            return Err("Aliran zlib PNG tidak valid.".into());
-        }
-        raw.extend_from_slice(&idat[zpos..zpos + len]);
-        zpos += len;
-        if header & 1 != 0 {
-            break;
-        }
-    }
-    let stride = (width as usize) * 3;
-    let mut rgb = Vec::with_capacity(stride * (height as usize));
-    for row in 0..(height as usize) {
-        let start = row * (stride + 1);
-        if start + stride + 1 > raw.len() {
-            return Err("Baris piksel PNG tidak lengkap.".into());
-        }
-        rgb.extend_from_slice(&raw[start + 1..start + 1 + stride]);
-    }
-    Ok(rgb)
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(96 * 1024 * 1024);
+    reader.limits(limits);
+    reader.decode().map(|img| if img.width() > 256 || img.height() > 256 { img.thumbnail(256, 256).to_rgb8() } else { img.to_rgb8() }).map_err(|_| "Gambar rusak atau melebihi 4096 × 4096 piksel.".to_owned())
 }
 
-pub fn seal_png_message(master: &[u8; 32], message: &str, context_id: &str) -> R<Vec<u8>> {
+pub fn cover_png(bytes: &[u8]) -> R<Vec<u8>> {
+    let rgb = read_carrier(bytes)?;
+    Ok(encode_uncompressed_png(rgb.width(), rgb.height(), rgb.as_raw()))
+}
+
+pub fn seal_png_message(master: &[u8; 32], message: &str, context_id: &str, carrier: &[u8]) -> R<Vec<u8>> {
     let trimmed = message.trim();
     if trimmed.is_empty() || trimmed.len() > 400 {
         return Err("Pesan gambar harus antara 1 sampai 400 karakter.".into());
@@ -137,27 +100,20 @@ pub fn seal_png_message(master: &[u8; 32], message: &str, context_id: &str) -> R
     packet.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     packet.extend_from_slice(&payload);
 
-    let total_channels = (WIDTH as usize) * (HEIGHT as usize) * 3;
-    if packet.len() * 8 > total_channels {
-        return Err("Pesan terlalu panjang untuk kapasitas piksel PNG.".into());
-    }
-    let mut rgb = vec![0u8; total_channels];
-    for y in 0..HEIGHT as usize {
-        for x in 0..WIDTH as usize {
-            let idx = (y * (WIDTH as usize) + x) * 3;
-            rgb[idx] = (28 + (x * 2) % 160) as u8;
-            rgb[idx + 1] = (76 + (y * 2) % 140) as u8;
-            rgb[idx + 2] = (62 + ((x + y) % 120)) as u8;
-        }
+    let image = read_carrier(carrier)?;
+    let (width, height) = image.dimensions();
+    let mut rgb = image.into_raw();
+    if packet.len() * 8 > rgb.len() {
+        return Err("Gambar terlalu kecil untuk pesan ini. Pilih gambar lebih besar.".into());
     }
     for (bit_idx, bit) in packet.iter().flat_map(|b| (0..8).rev().map(move |shift| (b >> shift) & 1)).enumerate() {
         rgb[bit_idx] = (rgb[bit_idx] & 0xFE) | bit;
     }
-    Ok(encode_uncompressed_png(WIDTH, HEIGHT, &rgb))
+    Ok(encode_uncompressed_png(width, height, &rgb))
 }
 
 pub fn open_png_message(master: &[u8; 32], png: &[u8], context_id: &str) -> R<String> {
-    let rgb = decode_uncompressed_png(png)?;
+    let rgb = read_carrier(png)?.into_raw();
     let read_byte = |byte_idx: usize| -> u8 {
         (0..8).fold(0u8, |acc, bit| (acc << 1) | (rgb[byte_idx * 8 + bit] & 1))
     };
@@ -181,10 +137,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn uploaded_compressed_png_preserves_dimensions_and_only_changes_lsb() {
+        let mut source = image::RgbImage::new(100, 90);
+        for (x, y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = image::Rgb([x as u8, y as u8, 200]);
+        }
+        let mut uploaded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(source.clone()).write_to(&mut uploaded, image::ImageFormat::Png).unwrap();
+        let cover = cover_png(uploaded.get_ref()).unwrap();
+        let output = seal_png_message(&[5; 32], "pesan uji", "bukti-1", uploaded.get_ref()).unwrap();
+        let decoded = read_carrier(&output).unwrap();
+        assert_eq!(decoded.dimensions(), source.dimensions());
+        assert_eq!(cover.len(), output.len());
+        for (before, after) in source.as_raw().iter().zip(decoded.as_raw()) {
+            assert_eq!(before & 0xfe, after & 0xfe);
+        }
+        assert_eq!(open_png_message(&[5; 32], &output, "bukti-1").unwrap(), "pesan uji");
+        assert!(open_png_message(&[6; 32], &output, "bukti-1").is_err());
+        assert!(open_png_message(&[5; 32], &output[..100], "bukti-1").is_err());
+    }
+
+    #[test]
     fn stego_png_roundtrip_and_context_protection() {
         let master = [5u8; 32];
         let msg = "Periksa koneksi Android-2F pukul 19.25 WIB.";
-        let png = seal_png_message(&master, msg, "SIM-BB/001:BB-001").unwrap();
+        let cover = encode_uncompressed_png(80, 60, &vec![120; 80 * 60 * 3]);
+        let png = seal_png_message(&master, msg, "SIM-BB/001:BB-001", &cover).unwrap();
+        assert_eq!(png.len(), cover.len());
+        assert_ne!(png, cover);
+        assert!(seal_png_message(&master, msg, "ctx", b"not an image").is_err());
+        let tiny = encode_uncompressed_png(1, 1, &[120; 3]);
+        assert!(seal_png_message(&master, msg, "ctx", &tiny).is_err());
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
         let extracted = open_png_message(&master, &png, "SIM-BB/001:BB-001").unwrap();
         assert_eq!(extracted, msg);

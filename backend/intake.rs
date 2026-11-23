@@ -13,6 +13,8 @@ pub(super) struct Intake {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) stego_png: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) stego_cover: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) exam_note: Option<String>,
 }
 
@@ -24,6 +26,7 @@ impl Intake {
             acquisition: "Diserahkan langsung".into(),
             notes: String::new(),
             stego_png: None,
+            stego_cover: None,
             exam_note: None,
         })
     }
