@@ -53,7 +53,7 @@ pub fn open(key: &[u8; 32], envelope: &Envelope, context: &str) -> R<Vec<u8>> {
     }.map_err(|_| "Verifikasi autentikasi gagal: kunci salah atau data berubah.".into())
 }
 
-fn vigenere(bytes: &[u8], key: &[u8; 32], decrypt: bool) -> Vec<u8> {
+pub(crate) fn vigenere(bytes: &[u8], key: &[u8; 32], decrypt: bool) -> Vec<u8> {
     let mut index = 0;
     bytes.iter().map(|&byte| {
         let base = if byte.is_ascii_uppercase() { b'A' } else if byte.is_ascii_lowercase() { b'a' } else { return byte };

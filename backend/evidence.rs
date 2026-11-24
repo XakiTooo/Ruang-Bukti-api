@@ -100,6 +100,15 @@ impl EvidenceService {
                     "hkdf_context": format!("ruang-bukti:{context}:file")
                 }))
             }
+            "simulation_text_key" | "test_vigenere" => {
+                let item = self.evidence.iter().find(|e| e.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
+                let context = format!("{}:{}", self.selected_case, item.id);
+                if action == "simulation_text_key" {
+                    Ok(super::text_simulation::reference(&self.master, &context))
+                } else {
+                    super::text_simulation::test_key(&self.master, &item.note, &context, field("vigenere_key"))
+                }
+            }
             "download_plain" => {
                 let item = self.evidence.iter().find(|e| e.id == field("id")).ok_or("Bukti tidak ditemukan.")?;
                 let context = format!("{}:{}", self.selected_case, item.id);

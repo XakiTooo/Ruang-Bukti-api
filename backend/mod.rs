@@ -11,6 +11,7 @@ mod evidence;
 mod intake;
 mod session;
 mod transactions;
+mod text_simulation;
 pub mod cloud;
 pub mod registration;
 
@@ -252,7 +253,7 @@ impl EvidenceService {
             return self.open_case(id);
         }
         if action == "create_case" { return self.create_case(data); }
-        if self.selected_case.is_empty() && matches!(action, "receive" | "offer" | "accept" | "verify" | "inspect" | "examine" | "report_pdf" | "download_plain" | "test_audit" | "extract_stego") {
+        if self.selected_case.is_empty() && matches!(action, "receive" | "offer" | "accept" | "verify" | "inspect" | "examine" | "report_pdf" | "download_plain" | "test_audit" | "extract_stego" | "simulation_text_key" | "test_vigenere") {
             return Err("Buka kasus dari arsip terlebih dahulu.".into());
         }
 
